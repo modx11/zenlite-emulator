@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZenLite Web Emulator — BO6 Trainer</title>
+<style>
+  /* Simple dark theme for the emulator */
+  :root {
+    --bg:#0c0f12;
+    --fg:#e9eef5;
+    --muted:#98a2b3;
+    --acc:#5cc2ff;
+    --panel:#161b22;
+    --ok:#22c55e;
+    --warn:#f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:16px 20px; border-bottom:1px solid #222; display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:18px; margin:0; }
+  header .tag { font-size:12px; color:var(--muted); padding:2px 8px; border:1px solid #334; border-radius:999px; }
+  main { display:grid; grid-template-columns: 350px 1fr; gap:16px; padding:16px; }
+  .card { background:var(--panel); border:1px solid #222a36; border-radius:12px; padding:14px; }
+  h2 { margin:0 0 10px 0; font-size:14px; color:#cbd5e1; letter-spacing:.2px; }
+  .controls { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; }
+  .btn { background:#1f2937; border:1px solid #2b3444; padding:9px 8px; color:#e5e7eb; border-radius:10px; text-align:center; cursor:pointer; user-select:none; font-size:12px; }
+  .btn.active { outline:2px solid var(--acc); background:#0d2233; }
+  .row { display:flex; gap:10px; align-items:center; margin-bottom:8px; }
+  .row label { width:110px; color:var(--muted); font-size:13px; }
+  .badge { padding:2px 8px; font-size:12px; border-radius:999px; background:#0b1730; border:1px solid #2a3b59; color:#b9d7ff; }
+  #oled { background:#000; border-radius:10px; width:100%; height:170px; border:1px solid #333; padding:10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:#0f0; }
+  #oled .title { color:#0f0; margin-bottom:6px; }
+  #oled .line { display:flex; justify-content:space-between; }
+  #oled .sel { background:#0f0; color:#000; padding:0 4px; border-radius:4px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .pill { background:#0b1730; border:1px solid #2a3b59; border-radius:8px; padding:8px; font-size:12px; color:#b9d7ff; }
+  .muted { color:var(--muted); font-size:12px; }
+  .log { height:180px; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#0b0f14; border:1px solid #222; border-radius:8px; padding:8px; }
+  .footer { padding:12px 16px; display:flex; justify-content:space-between; align-items:center; color:var(--muted); border-top:1px solid #222; flex-wrap:wrap; }
+  .switch { display:inline-flex; align-items:center; gap:8px; cursor:pointer; }
+  .switch input { appearance:none; width:40px; height:22px; background:#222; border-radius:999px; position:relative; outline:none; border:1px solid #333; transition:background .2s; }
+  .switch input:checked { background:#0a4; }
+  .switch input::after { content:""; width:16px; height:16px; background:#fff; border-radius:50%; position:absolute; top:2.5px; left:3px; transition: all .18s ease; }
+  .switch input:checked::after { left:20px; }
+  .kbd { background:#222; border:1px solid #333; border-radius:6px; padding:2px 6px; margin-inline:2px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ZenLite Web Emulator</h1>
+  <span class="tag">BO6 Trainer Emulator</span>
+</header>
+<main>
+  <section class="card">
+    <h2>لوحة الأزرار</h2>
+    <div class="controls" id="buttons"></div>
+    <div class="row">
+      <label>RX (العصا اليمنى X)</label>
+      <input type="range" id="RX" min="-100" max="100" value="0" oninput="setAxis('RX', this.value)">
+      <span class="badge" id="RXv">0</span>
+    </div>
+    <div class="row">
+      <label>RY (العصا اليمنى Y)</label>
+      <input type="range" id="RY" min="-100" max="100" value="0" oninput="setAxis('RY', this.value)">
+      <span class="badge" id="RYv">0</span>
+    </div>
+    <div class="grid" style="margin-top:8px;">
+      <div class="pill">حالة المحاكاة: <span id="simState">موقوف</span></div>
+      <div class="pill">الزمن (ms): <span id="timeMs">0</span></div>
+    </div>
+    <div class="row" style="margin-top:8px; align-items:center;">
+      <label class="switch">
+        <input type="checkbox" id="runToggle">
+        <span></span>
+      </label>
+      <span style="margin-inline-start:8px;">تشغيل/إيقاف المحاكاة</span>
+    </div>
+  </section>
+  <section class="card">
+    <h2>شاشة OLED (محاكاة)</h2>
+    <div id="oled">
+      <div class="title">BO6 TRAINER</div>
+      <div class="line"><span>AA</span><span>–</span></div>
+      <div class="line"><span>AR_Y</span><span>–</span></div>
+      <div class="line"><span>AR_X</span><span>–</span></div>
+      <div class="line"><span>RFms</span><span>–</span></div>
+      <div class="line"><span>RFON</span><span>–</span></div>
+    </div>
+    <div class="grid" style="margin-top:12px;">
+      <div class="pill">R2 (خارج): <span id="R2out">0</span></div>
+      <div class="pill">RX/RY (خارج): <span id="stickOut">0 / 0</span></div>
+    </div>
+    <div class="grid" style="margin-top:12px;">
+      <div class="card" style="background:#0b0f14;">
+        <h2>سجل الطلقات (Rapid‑Fire)</h2>
+        <div class="log" id="shotsLog"></div>
+      </div>
+      <div class="card" style="background:#0b0f14;">
+        <h2>الأحداث</h2>
+        <div class="log" id="eventsLog"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="footer">
+  <div>اختصارات: <span class="kbd">Touchpad</span> + <span class="kbd">Options</span> لفتح/غلق المنيو. تنقّل <span class="kbd">L1/R1</span>، تعديل <span class="kbd">Up/Down</span>، خروج وحفظ <span class="kbd">Circle</span>، تبديل RF <span class="kbd">Triangle</span>.</div>
+  <div class="muted">القيم تحفظ في المتصفح (localStorage)</div>
+</div>
+
+<script>
+// ----- Constants and initial state -----
+const BTN_NAMES = ["L2","R2","L1","R1","TOUCH","OPTIONS","UP","DOWN","LEFT","RIGHT","CROSS","CIRCLE","TRIANGLE","SHARE"];
+const AXES = ["RX","RY"];
+
+// SPVAR defaults and load from localStorage
+const SP_KEY = "zenlite_spvar_v1";
+const spDefault = { AA_STRENGTH:12, AR_BASE_Y:18, AR_BASE_X:0, RF_DELAY:55, RF_ENABLED:1 };
+let SPVAR = (()=> {
+  try {
+    return Object.assign({}, spDefault, JSON.parse(localStorage.getItem(SP_KEY) || '{}'));
+  } catch (e) {
+    return Object.assign({}, spDefault);
+  }
+})();
+
+let menu_on = false;
+let sel = 0;
+let rtime_ms = 0;
+let out = { R2: 0, RX: 0, RY: 0 };
+let rapid = { active:false, phase:0, next_ms:0 };
+
+// Controller state: buttons current and previous, axes
+let ctrl = { buttons:{}, prev:{}, axes:{ RX:0, RY:0 } };
+BTN_NAMES.forEach(n => { ctrl.buttons[n] = 0; ctrl.prev[n] = 0; });
+
+// Setup UI: create button elements
+const buttonsDiv = document.getElementById('buttons');
+BTN_NAMES.forEach(name => {
+  const btn = document.createElement('div');
+  btn.className = 'btn';
+  btn.textContent = name;
+  btn.onclick = () => toggleButton(name, btn);
+  buttonsDiv.appendChild(btn);
+});
+
+// Toggle button state and update UI class
+function toggleButton(name, el) {
+  ctrl.buttons[name] = ctrl.buttons[name] ? 0 : 1;
+  el.classList.toggle('active', !!ctrl.buttons[name]);
+}
+
+// Set axis via range input
+function setAxis(axis, val) {
+  ctrl.axes[axis] = parseInt(val, 10);
+  document.getElementById(axis + 'v').textContent = String(ctrl.axes[axis]);
+}
+
+// Utility: clamp value between min and max
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+// Draw OLED menu lines
+function drawOLED() {
+  const lines = [
+    ['AA', SPVAR.AA_STRENGTH],
+    ['AR_Y', SPVAR.AR_BASE_Y],
+    ['AR_X', SPVAR.AR_BASE_X],
+    ['RFms', SPVAR.RF_DELAY],
+    ['RFON', SPVAR.RF_ENABLED]
+  ];
+  const oled = document.getElementById('oled');
+  oled.innerHTML = '<div class="title">BO6 TRAINER</div>';
+  lines.forEach((row, i) => {
+    const div = document.createElement('div');
+    div.className = 'line';
+    const label = document.createElement('span');
+    label.textContent = row[0];
+    if (menu_on && i === sel) { label.className = 'sel'; }
+    const val = document.createElement('span');
+    val.textContent = row[1];
+    div.appendChild(label);
+    div.appendChild(val);
+    oled.appendChild(div);
+  });
+}
+
+// Helpers to read button state and detect press event
+function get_val(name) {
+  if (BTN_NAMES.includes(name)) return ctrl.buttons[name] ? 100 : 0;
+  if (AXES.includes(name)) return ctrl.axes[name];
+  return 0;
+}
+function event_press(name) {
+  const was = ctrl.prev[name] || 0;
+  const now = ctrl.buttons[name] || 0;
+  return (!was && now);
+}
+function end_tick() {
+  BTN_NAMES.forEach(n => { ctrl.prev[n] = ctrl.buttons[n]; });
+}
+
+// Aim Assist micro movement (simple pattern) during ADS
+function aim_assist_micro() {
+  const s = SPVAR.AA_STRENGTH;
+  if (s <= 0) return;
+  const phase = Math.floor(rtime_ms / 40) % 4;
+  let rx = out.RX;
+  let ry = out.RY;
+  if (phase === 0) rx += s;
+  else if (phase === 1) ry += s;
+  else if (phase === 2) rx -= s;
+  else ry -= s;
+  out.RX = clamp(rx, -100, 100);
+  out.RY = clamp(ry, -100, 100);
+}
+
+// Dynamic anti-recoil: adjust RX/RY based on base values and time tick
+function dynamic_antirecoil() {
+  const tick = Math.floor(rtime_ms / 80) % 6;
+  const dyn = SPVAR.AR_BASE_Y + tick;
+  let ry = out.RY + dyn;
+  let rx = out.RX + SPVAR.AR_BASE_X;
+  out.RY = clamp(ry, -100, 100);
+  out.RX = clamp(rx, -100, 100);
+}
+
+// Rapid-fire combo start/stop functions
+function combo_start_rapid(now) {
+  rapid.active = true;
+  rapid.phase = 0;
+  rapid.next_ms = now;
+}
+function combo_stop_rapid() {
+  rapid.active = false;
+}
+
+// Logging functions
+const shotsLog = document.getElementById('shotsLog');
+const eventsLog = document.getElementById('eventsLog');
+function logShot(ms) {
+  const p = document.createElement('div');
+  p.textContent = 'Shot @ ' + ms + ' ms';
+  shotsLog.appendChild(p);
+  shotsLog.scrollTop = shotsLog.scrollHeight;
+}
+function logEvt(txt) {
+  const p = document.createElement('div');
+  p.textContent = txt;
+  eventsLog.appendChild(p);
+  eventsLog.scrollTop = eventsLog.scrollHeight;
+}
+
+// Save SPVAR to localStorage
+function saveSP() {
+  try { localStorage.setItem(SP_KEY, JSON.stringify(SPVAR)); } catch (e) { /* ignore */ }
+}
+
+// Adjust selected value in menu
+function adjust(dir) {
+  if (sel === 0) {
+    SPVAR.AA_STRENGTH = clamp(SPVAR.AA_STRENGTH + dir, 0, 30);
+  } else if (sel === 1) {
+    SPVAR.AR_BASE_Y = clamp(SPVAR.AR_BASE_Y + dir, 0, 60);
+  } else if (sel === 2) {
+    SPVAR.AR_BASE_X = clamp(SPVAR.AR_BASE_X + dir, -30, 30);
+  } else if (sel === 3) {
+    SPVAR.RF_DELAY = clamp(SPVAR.RF_DELAY + dir * 5, 15, 120);
+  } else if (sel === 4) {
+    SPVAR.RF_ENABLED = SPVAR.RF_ENABLED ? 0 : 1;
+  }
+}
+
+// Main simulation step executed every 20 ms
+function step(dt = 20) {
+  rtime_ms += dt;
+  // Toggle menu with Touch + Options
+  if (get_val('TOUCH') && event_press('OPTIONS')) {
+    menu_on = !menu_on;
+    if (menu_on) {
+      logEvt('Menu opened');
+    } else {
+      saveSP();
+      logEvt('Menu closed and saved');
+    }
+    drawOLED();
+  }
+  // If menu is on, handle navigation and editing
+  if (menu_on) {
+    if (event_press('R1')) { sel = (sel + 1) % 5; drawOLED(); logEvt('Select index ' + sel); }
+    if (event_press('L1')) { sel = (sel + 4) % 5; drawOLED(); logEvt('Select index ' + sel); }
+    if (event_press('UP')) { adjust(+1); drawOLED(); logEvt('Increase value'); }
+    if (event_press('DOWN')) { adjust(-1); drawOLED(); logEvt('Decrease value'); }
+    if (event_press('TRIANGLE')) { SPVAR.RF_ENABLED = SPVAR.RF_ENABLED ? 0 : 1; drawOLED(); logEvt('RF toggle -> ' + SPVAR.RF_ENABLED); }
+    if (event_press('CIRCLE')) { menu_on = false; saveSP(); drawOLED(); logEvt('Exit menu and saved'); }
+    out.R2 = 0;
+    document.getElementById('R2out').textContent = out.R2;
+    document.getElementById('stickOut').textContent = out.RX + ' / ' + out.RY;
+    end_tick();
+    return;
+  }
+  // If not in menu, apply aim assist if ADS (L2 > 10)
+  if (get_val('L2') > 10) {
+    aim_assist_micro();
+  }
+  // Apply dynamic anti-recoil and rapid-fire when firing (R2 > 10)
+  if (get_val('R2') > 10) {
+    dynamic_antirecoil();
+    if (SPVAR.RF_ENABLED) {
+      if (!rapid.active) combo_start_rapid(rtime_ms);
+    } else {
+      combo_stop_rapid();
+    }
+  } else {
+    combo_stop_rapid();
+    out.R2 = 0;
+  }
+  // Run rapid-fire if active
+  if (rapid.active) {
+    if (rtime_ms >= rapid.next_ms) {
+      if (rapid.phase === 0) {
+        out.R2 = 100;
+        logShot(rtime_ms);
+        rapid.phase = 1;
+        rapid.next_ms = rtime_ms + 20;
+      } else {
+        out.R2 = 0;
+        rapid.phase = 0;
+        rapid.next_ms = rtime_ms + SPVAR.RF_DELAY;
+      }
+    }
+  }
+  // Update output display
+  document.getElementById('R2out').textContent = out.R2;
+  document.getElementById('stickOut').textContent = out.RX + ' / ' + out.RY;
+  // Next tick prepare prev states
+  end_tick();
+}
+
+// Simulation timer management
+let timer = null;
+const runToggle = document.getElementById('runToggle');
+runToggle.addEventListener('change', () => {
+  if (runToggle.checked) {
+    document.getElementById('simState').textContent = 'يعمل';
+    timer = setInterval(() => {
+      step(20);
+      drawOLED();
+      document.getElementById('timeMs').textContent = rtime_ms;
+    }, 20);
+  } else {
+    clearInterval(timer);
+    timer = null;
+    document.getElementById('simState').textContent = 'موقوف';
+  }
+});
+
+// Initial draw
+drawOLED();
+
+</script>
+</body>
+</html>
