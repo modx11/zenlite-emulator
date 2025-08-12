@@ -1,0 +1,262 @@
+// ==============================
+// BO6 Smart Hybrid v1 (PS5)
+// Aim Assist + Dynamic Anti-Recoil (Profiles) + Rapid Fire + Auto Sprint + OLED Menu + SPVAR
+// Open/Close Menu: Touchpad + Options
+// Navigate: L1/R1 | Adjust: Dpad Up/Down | Exit/Save: Circle | Toggle RF: Triangle
+// Quick Shortcuts (in-game):
+//   - Dpad RIGHT  : Toggle Rapid Fire ON/OFF
+//   - Dpad LEFT   : Cycle Recoil Profile (AR -> SMG -> SNIPER)
+//   - L3 (Left Stick Click): Toggle Auto Sprint ON/OFF
+// Notes: Values persist via SPVAR slots 1..8
+// ==============================
+
+/* ===== Default Settings ===== */
+int AA_STRENGTH = 12;     // 0..30
+int AR_BASE_Y   = 18;     // 0..60
+int AR_BASE_X   = 0;      // -30..30
+int RF_DELAY    = 55;     // 15..120 ms
+int RF_ENABLED  = 1;      // 1=on, 0=off
+int AUTO_SPRINT = 1;      // 1=on, 0=off
+int RECOIL_PROFILE = 0;   // 0=AR, 1=SMG, 2=SNIPER
+
+define AA_MIN = 0;  define AA_MAX = 30;
+define ARY_MIN = 0; define ARY_MAX = 60;
+define ARX_MIN = -30; define ARX_MAX = 30;
+define RF_MIN = 15; define RF_MAX = 120;
+
+/* ===== Button Aliases (PS5 as PS4) ===== */
+define ADS = PS4_L2;
+define FIRE = PS4_R2;
+define L1 = PS4_L1;
+define R1 = PS4_R1;
+define L3 = PS4_L3;
+define TOUCH = PS4_TOUCH;
+define OPTIONS = PS4_OPTIONS;
+define UP = PS4_UP; define DOWN = PS4_DOWN;
+define LEFT = PS4_LEFT; define RIGHT = PS4_RIGHT;
+define CROSS = PS4_CROSS; define CIRCLE = PS4_CIRCLE;
+define TRIANGLE = PS4_TRIANGLE;
+
+/* ===== Global/UI ===== */
+int menu_on = FALSE;
+int sel = 0; // 0=AA,1=AR_Y,2=AR_X,3=RFms,4=RF_ON,5=AUTO_SPRINT,6=PROFILE
+int tick;
+define OLED_SMALL = 0;
+define WHITE = 1; define BLACK = 0;
+
+/* ===== Load persistent ===== */
+init {
+    AA_STRENGTH   = get_pvar(SPVAR_1, AA_MIN, AA_MAX, AA_STRENGTH);
+    AR_BASE_Y     = get_pvar(SPVAR_2, ARY_MIN, ARY_MAX, AR_BASE_Y);
+    AR_BASE_X     = get_pvar(SPVAR_3, ARX_MIN, ARX_MAX, AR_BASE_X);
+    RF_DELAY      = get_pvar(SPVAR_4, RF_MIN, RF_MAX, RF_DELAY);
+    RF_ENABLED    = get_pvar(SPVAR_5, 0, 1, RF_ENABLED);
+    AUTO_SPRINT   = get_pvar(SPVAR_6, 0, 1, AUTO_SPRINT);
+    RECOIL_PROFILE= get_pvar(SPVAR_7, 0, 2, RECOIL_PROFILE);
+    cls_oled(BLACK);
+    draw_oled_header();
+    draw_oled_menu();
+}
+
+/* ===== Main Loop ===== */
+main {
+    // Open/Close OLED menu
+    if (get_val(TOUCH) && event_press(OPTIONS)) {
+        menu_on = !menu_on;
+        if (menu_on) {
+            cls_oled(BLACK);
+            draw_oled_header();
+            draw_oled_menu();
+        } else {
+            save_pvars();
+            flash_ok();
+            cls_oled(BLACK);
+        }
+    }
+
+    if (menu_on) {
+        handle_menu_input();
+        set_val(FIRE, 0); set_val(ADS, 0);
+        return;
+    }
+
+    // Quick toggles while playing
+    if (event_press(RIGHT))  { RF_ENABLED = RF_ENABLED ? 0 : 1; flash_tick(); }
+    if (event_press(LEFT))   { RECOIL_PROFILE++; if (RECOIL_PROFILE>2) RECOIL_PROFILE=0; apply_profile(); flash_tick(); }
+    if (event_press(L3))     { AUTO_SPRINT = AUTO_SPRINT ? 0 : 1; flash_tick(); }
+
+    // Auto Sprint (simplified: convert small forward to 100)
+    if (AUTO_SPRINT && get_val(PS4_LY) < -20) {
+        set_val(PS4_L3, 100); // click to sprint
+    }
+
+    // Aim Assist during ADS
+    if (get_val(ADS) > 10) aim_assist_micro();
+
+    // Dynamic Anti-Recoil + Rapid Fire during FIRE
+    if (get_val(FIRE) > 10) {
+        dynamic_antirecoil();
+        if (RF_ENABLED) combo_run(RAPID_FIRE);
+    } else combo_stop(RAPID_FIRE);
+}
+
+/* ===== Rapid Fire Combo ===== */
+combo RAPID_FIRE {
+    set_val(FIRE, 100);
+    wait(20);
+    set_val(FIRE, 0);
+    wait(RF_DELAY);
+}
+
+/* ===== Logic ===== */
+void apply_profile() {
+    // Base Y for profiles; tweak as you like
+    if (RECOIL_PROFILE == 0) { /* AR */ AR_BASE_Y = clamp(AR_BASE_Y, 20, 28); }
+    if (RECOIL_PROFILE == 1) { /* SMG */ AR_BASE_Y = clamp(AR_BASE_Y, 14, 22); }
+    if (RECOIL_PROFILE == 2) { /* SNIPER */ AR_BASE_Y = clamp(AR_BASE_Y, 8, 16); }
+}
+
+void dynamic_antirecoil() {
+    // Dynamic raise with time (0..5) * 1
+    tick = (get_rtime() / 80) % 6;
+    fix32 dyn = AR_BASE_Y + tick;
+    fix32 ry = get_val(PS4_RY) + dyn;
+    if (ry > 100) ry = 100;
+    set_val(PS4_RY, ry);
+
+    fix32 rx = get_val(PS4_RX) + AR_BASE_X;
+    if (rx > 100) rx = 100; if (rx < -100) rx = -100;
+    set_val(PS4_RX, rx);
+}
+
+void aim_assist_micro() {
+    int s = AA_STRENGTH;
+    if (s <= 0) return;
+    int phase = (get_rtime() / 40) % 4;
+    int rx = get_val(PS4_RX);
+    int ry = get_val(PS4_RY);
+    if (phase == 0)      { rx += s; }
+    else if (phase == 1) { ry += s; }
+    else if (phase == 2) { rx -= s; }
+    else                 { ry -= s; }
+    clamp_stick(rx, ry);
+    set_val(PS4_RX, rx);
+    set_val(PS4_RY, ry);
+}
+
+/* ===== OLED Menu ===== */
+void handle_menu_input() {
+    if (event_press(R1)) { sel++; if (sel > 6) sel = 0; draw_oled_menu(); }
+    if (event_press(L1)) { sel--; if (sel < 0) sel = 6; draw_oled_menu(); }
+
+    if (event_press(UP))   { menu_adjust(+1); draw_oled_menu(); rumble_tick(); }
+    if (event_press(DOWN)) { menu_adjust(-1); draw_oled_menu(); rumble_tick(); }
+
+    if (event_press(TRIANGLE)) { RF_ENABLED = RF_ENABLED ? 0 : 1; draw_oled_menu(); rumble_tick(); }
+
+    if (event_press(CIRCLE)) {
+        menu_on = FALSE;
+        save_pvars();
+        flash_ok();
+        cls_oled(BLACK);
+    }
+}
+
+void menu_adjust(int dir) {
+    if (sel == 0) { AA_STRENGTH += dir; if (AA_STRENGTH < AA_MIN) AA_STRENGTH = AA_MIN; if (AA_STRENGTH > AA_MAX) AA_STRENGTH = AA_MAX; }
+    if (sel == 1) { AR_BASE_Y   += dir; if (AR_BASE_Y   < ARY_MIN) AR_BASE_Y   = ARY_MIN; if (AR_BASE_Y   > ARY_MAX) AR_BASE_Y   = ARY_MAX; }
+    if (sel == 2) { AR_BASE_X   += dir; if (AR_BASE_X   < ARX_MIN) AR_BASE_X   = ARX_MIN; if (AR_BASE_X   > ARX_MAX) AR_BASE_X   = ARX_MAX; }
+    if (sel == 3) { RF_DELAY    += dir * 5; if (RF_DELAY < RF_MIN) RF_DELAY = RF_MIN; if (RF_DELAY > RF_MAX) RF_DELAY = RF_MAX; }
+    if (sel == 4) { RF_ENABLED  = RF_ENABLED ? 0 : 1; }
+    if (sel == 5) { AUTO_SPRINT = AUTO_SPRINT ? 0 : 1; }
+    if (sel == 6) { RECOIL_PROFILE += dir; if (RECOIL_PROFILE < 0) RECOIL_PROFILE=2; if (RECOIL_PROFILE > 2) RECOIL_PROFILE=0; apply_profile(); }
+}
+
+/* ===== OLED Draw ===== */
+void draw_oled_header() {
+    rect_oled(0, 0, 128, 12, 1, WHITE);
+    cls_puts();
+    putstr("BO6 SMART v1");
+    puts_oled(2, 2, OLED_SMALL, 12, BLACK);
+}
+void draw_oled_menu() {
+    rect_oled(0, 13, 128, 51, 1, BLACK);
+    draw_menu_line(0, "AA  :", AA_STRENGTH,   (sel==0));
+    draw_menu_line(1, "AR_Y:", AR_BASE_Y,     (sel==1));
+    draw_menu_line(2, "AR_X:", AR_BASE_X,     (sel==2));
+    draw_menu_line(3, "RFms:", RF_DELAY,      (sel==3));
+    draw_menu_line(4, "RFON:", RF_ENABLED,    (sel==4));
+    draw_menu_line(5, "ASpr:", AUTO_SPRINT,   (sel==5));
+    draw_menu_line(6, "Prof:", RECOIL_PROFILE,(sel==6));
+}
+
+void draw_menu_line(int row, char *label, int value, int active) {
+    int y = 15 + row*7; // ضغطنا المسافات لتسع 7 أسطر
+    if (active) rect_oled(0, y-1, 128, 8, 0, WHITE);
+    cls_puts();
+    putlabel(row);
+    puts_oled(2, y, OLED_SMALL, _puts_len, active?BLACK:WHITE);
+    cls_puts();
+    putnum(value);
+    int len = _puts_len;
+    int x = 122 - (len * 6);
+    puts_oled(x, y, OLED_SMALL, len, active?BLACK:WHITE);
+}
+
+/* ===== Small text helpers for OLED ===== */
+int _puts_len = 0;
+void cls_puts() { _puts_len = 0; }
+void putchr(int ascii) { _puts_len++; putc_oled(_puts_len, ascii); }
+#define PUTSTR_AA()     putchr('A');putchr('A');putchr(' ');putchr(' ');putchr(':')
+#define PUTSTR_AR_Y()   putchr('A');putchr('R');putchr('_');putchr('Y');putchr(':')
+#define PUTSTR_AR_X()   putchr('A');putchr('R');putchr('_');putchr('X');putchr(':')
+#define PUTSTR_RFMS()   putchr('R');putchr('F');putchr('m');putchr('s');putchr(':')
+#define PUTSTR_RFON()   putchr('R');putchr('F');putchr('O');putchr('N');putchr(':')
+#define PUTSTR_ASPR()   putchr('A');putchr('S');putchr('p');putchr('r');putchr(':')
+#define PUTSTR_PROF()   putchr('P');putchr('r');putchr('o');putchr('f');putchr(':')
+void putlabel(char idx) {
+    if (idx==0) { PUTSTR_AA(); }
+    if (idx==1) { PUTSTR_AR_Y(); }
+    if (idx==2) { PUTSTR_AR_X(); }
+    if (idx==3) { PUTSTR_RFMS(); }
+    if (idx==4) { PUTSTR_RFON(); }
+    if (idx==5) { PUTSTR_ASPR(); }
+    if (idx==6) { PUTSTR_PROF(); }
+}
+void putnum(int v) {
+    if (v < 0) { putchr('-'); v = -v; }
+    int d100 = v/100;
+    int d10  = (v/10)%10;
+    int d1   = v%10;
+    if (d100) putchr('0'+d100);
+    if (d100 || d10)  putchr('0'+d10);
+    putchr('0'+d1);
+}
+
+/* ===== Save / Feedback ===== */
+void save_pvars() {
+    set_pvar(SPVAR_1, AA_STRENGTH);
+    set_pvar(SPVAR_2, AR_BASE_Y);
+    set_pvar(SPVAR_3, AR_BASE_X);
+    set_pvar(SPVAR_4, RF_DELAY);
+    set_pvar(SPVAR_5, RF_ENABLED);
+    set_pvar(SPVAR_6, AUTO_SPRINT);
+    set_pvar(SPVAR_7, RECOIL_PROFILE);
+}
+void flash_ok() { set_rgb(0,100,0); combo_run(RUMBLE_OK); }
+void flash_tick(){ combo_run(RUMBLE_TICK); }
+combo RUMBLE_OK { set_rumble(RUMBLE_A, 50); wait(180); reset_rumble(); }
+combo RUMBLE_TICK { set_rumble(RUMBLE_B, 40); wait(70); reset_rumble(); }
+
+/* ===== Utils ===== */
+int clamp(int v, int lo, int hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+void clamp_stick(int &x, int &y) {
+    if (x > 100) x = 100;
+    if (x < -100) x = -100;
+    if (y > 100) y = 100;
+    if (y < -100) y = -100;
+}
